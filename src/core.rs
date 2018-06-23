@@ -41,7 +41,7 @@ pub fn encrypt(privkey: &Box<[u8]>, pubkey: &Box<[u8]>, fin: &String, fout: &Str
 
     // open files
     let mut fp_in = File::open(fin).unwrap();
-    let mut fp_out = open_writer(fout);
+    let mut fp_out = open_writer(fout).unwrap();
 
     // detect input length
     let payload_length = fp_in.seek(SeekFrom::End(0)).unwrap();
@@ -95,8 +95,8 @@ pub fn decrypt(
     fout: &String,
 ) -> Box<[u8]> {
     // open files
-    let mut fp_in = open_reader(fin);
-    let mut fp_out = open_writer(fout);
+    let mut fp_in = open_reader(fin).unwrap();
+    let mut fp_out = open_writer(fout).unwrap();
 
     // set up noise protocol
     let builder: NoiseBuilder = NoiseBuilder::new(PARAMS.clone());

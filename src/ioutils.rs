@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 
 use base64::{decode, encode};
+use failure::{Error, ResultExt};
 
 pub fn is_stdinout(fname: &String) -> bool {
     fname == "-"
@@ -11,43 +12,54 @@ pub fn is_none(fname: &String) -> bool {
     fname == "."
 }
 
-pub fn write_data(fname: &String, data: Box<[u8]>) {
+pub fn write_key(fname: &String, data: Box<[u8]>) -> Result<(), Error> {
     if is_none(&fname) {
-        return;
+        return Ok(());
     }
 
     let encoded = encode(&data);
     if is_stdinout(fname) {
         println!("{}", encoded);
     } else {
-        let mut file = File::create(fname).unwrap();
-        file.write_all(encoded.as_bytes()).unwrap();
+        let mut file = File::create(fname).context(format!("Cannot create key file: {}", fname))?;
+        file.write_all(encoded.as_bytes())
+            .context(format!("Cannot write data to key file: {}", fname))?;
     }
+    Ok(())
 }
 
-pub fn read_data(fname: &String) -> Box<[u8]> {
+pub fn read_key(fname: &String) -> Result<Box<[u8]>, Error> {
     let mut buffer = String::new();
     if is_stdinout(fname) {
-        io::stdin().read_to_string(&mut buffer).unwrap();
+        io::stdin()
+            .read_to_string(&mut buffer)
+            .context("stdin data cannot be parsed to string")?;
     } else {
-        let mut file = File::open(fname).unwrap();
-        file.read_to_string(&mut buffer).unwrap();
+        let mut file = File::open(fname).context(format!("Could not open key file: {}", fname))?;
+        file.read_to_string(&mut buffer)
+            .context(format!("Could not read key as string: {}", fname))?;
     }
-    decode(buffer.trim()).unwrap().into()
+    Ok(decode(buffer.trim())
+        .context(format!("Invalid base64 data in key file: {}", fname))?
+        .into())
 }
 
-pub fn open_reader(fname: &String) -> Box<Read> {
+pub fn open_reader(fname: &String) -> Result<Box<Read>, Error> {
     if is_stdinout(fname) {
-        Box::new(io::stdin())
+        Ok(Box::new(io::stdin()))
     } else {
-        Box::new(File::open(fname).unwrap())
+        Ok(Box::new(
+            File::open(fname).context(format!("Cannot open input file: {}", fname))?
+        ))
     }
 }
 
-pub fn open_writer(fname: &String) -> Box<Write> {
+pub fn open_writer(fname: &String) -> Result<Box<Write>, Error> {
     if is_stdinout(fname) {
-        Box::new(io::stdout())
+        Ok(Box::new(io::stdout()))
     } else {
-        Box::new(File::create(fname).unwrap())
+        Ok(Box::new(
+            File::create(fname).context(format!("Cannot open output file: {}", fname))?
+        ))
     }
 }

@@ -1,5 +1,6 @@
 extern crate base64;
 extern crate byteorder;
+extern crate failure;
 #[macro_use]
 extern crate lazy_static;
 extern crate snow;
@@ -12,7 +13,7 @@ mod ioutils;
 use quicli::prelude::*;
 
 use core::{decrypt, encrypt, extract_pubkey, gen_key};
-use ioutils::{is_none, is_stdinout, read_data, write_data};
+use ioutils::{is_none, is_stdinout, read_key, write_key};
 
 /// Simple encryption tool
 #[derive(Debug, StructOpt)]
@@ -96,17 +97,17 @@ main!(|args: Cli, log_level: verbosity| {
             let key = gen_key();
 
             info!("write to output ({})", output);
-            write_data(&output, key);
+            write_key(&output, key)?;
         }
         Command::PubKey { input, output } => {
             info!("read private key ({})", input);
-            let privkey = read_data(&input);
+            let privkey = read_key(&input)?;
 
             info!("extracting public key");
             let pubkey = extract_pubkey(privkey);
 
             info!("write to output ({})", output);
-            write_data(&output, pubkey);
+            write_key(&output, pubkey)?;
         }
         Command::Encrypt {
             input,
@@ -123,10 +124,10 @@ main!(|args: Cli, log_level: verbosity| {
             }
 
             info!("read private key ({})", privkey);
-            let privkey = read_data(&privkey);
+            let privkey = read_key(&privkey)?;
 
             info!("read public key ({})", pubkey);
-            let pubkey = read_data(&pubkey);
+            let pubkey = read_key(&pubkey)?;
 
             info!("encrypting");
             encrypt(&privkey, &pubkey, &input, &output);
@@ -155,19 +156,19 @@ main!(|args: Cli, log_level: verbosity| {
             }
 
             info!("read private key ({})", privkey);
-            let privkey = read_data(&privkey);
+            let privkey = read_key(&privkey)?;
 
             let pubkey = if is_none(&pubkey) {
                 info!("no public key provided");
                 None
             } else {
                 info!("read public key ({})", pubkey);
-                Some(read_data(&pubkey))
+                Some(read_key(&pubkey)?)
             };
 
             info!("decrypting");
             let pubkey2 = decrypt(&privkey, &pubkey, &input, &output);
-            write_data(&foundkey, pubkey2);
+            write_key(&foundkey, pubkey2)?;
         }
     }
     info!("done");
