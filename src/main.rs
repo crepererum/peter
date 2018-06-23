@@ -167,7 +167,7 @@ main!(|args: Cli, log_level: verbosity| {
             };
 
             info!("decrypting");
-            let pubkey2 = decrypt(&privkey, &pubkey, &input, &output);
+            let pubkey2 = decrypt(&privkey, &pubkey, &input, &output)?;
             write_key(&foundkey, pubkey2)?;
         }
     }

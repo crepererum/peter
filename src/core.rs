@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use failure::{Error, ResultExt};
+use failure::{err_msg, Error, ResultExt};
 use snow::params::NoiseParams;
 use snow::{CryptoResolver, DefaultResolver, NoiseBuilder};
 
@@ -123,10 +123,10 @@ pub fn decrypt(
     pubkey: &Option<Box<[u8]>>,
     fin: &String,
     fout: &String,
-) -> Box<[u8]> {
+) -> Result<Box<[u8]>, Error> {
     // open files
-    let mut fp_in = open_reader(fin).unwrap();
-    let mut fp_out = open_writer(fout).unwrap();
+    let mut fp_in = open_reader(fin)?;
+    let mut fp_out = open_writer(fout)?;
 
     // set up noise protocol
     let builder: NoiseBuilder = NoiseBuilder::new(PARAMS.clone());
@@ -134,52 +134,67 @@ pub fn decrypt(
         .local_private_key(&privkey)
         .prologue(PROLOGUE.as_bytes())
         .build_responder()
-        .unwrap();
+        .context("Unable to set up noise session")?;
 
     // IO buffers
     let mut buffer_in = vec![0u8; MAX_MESSAGE_LENGTH];
     let mut buffer_out = vec![0u8; MAX_PAYLOAD_PART_LENGTH];
 
     // read intro
-    fp_in.read_exact(&mut buffer_in[..HEADER_LENGTH]).unwrap();
+    fp_in
+        .read_exact(&mut buffer_in[..HEADER_LENGTH])
+        .context(format!(
+            "Cannot read handshake data from input file: {}",
+            fin
+        ))?;
     let s_out = noise
         .read_message(&buffer_in[..HEADER_LENGTH], &mut buffer_out)
-        .unwrap();
+        .context("Cannot verify handshake data")?;
     assert!(s_out == 0);
-    let mut noise = noise.into_transport_mode().unwrap();
+    let mut noise = noise
+        .into_transport_mode()
+        .context("Cannot switch session in transport state")?;
     fp_in
         .read_exact(&mut buffer_in[..SIZEMARKER_ENC_LENGTH])
-        .unwrap();
+        .context(format!(
+            "Cannot read encrypted payload size from input file: {}",
+            fin
+        ))?;
     let s_out = noise
         .read_message(&buffer_in[..SIZEMARKER_ENC_LENGTH], &mut buffer_out)
-        .unwrap();
+        .context("Cannot decrypt payload size")?;
     assert!(s_out == SIZEMARKER_LENGTH);
     let payload_length = (&buffer_out[..SIZEMARKER_LENGTH])
         .read_u64::<BigEndian>()
-        .unwrap();
+        .context("Cannot decode payload size")?;
 
     // decrypt payload
     let mut payload_length2 = 0u64;
     loop {
-        let s_payload_enc = fp_in.read(&mut buffer_in).unwrap();
+        let s_payload_enc = fp_in.read(&mut buffer_in).context(format!(
+            "Cannot read encrypted block from input file: {}",
+            fin
+        ))?;
         if s_payload_enc == 0 {
             break;
         }
         let s_out = noise
             .read_message(&buffer_in[..s_payload_enc], &mut buffer_out)
-            .unwrap();
-        fp_out.write(&buffer_out[..s_out]).unwrap();
+            .context("Cannot decrypt block")?;
+        fp_out.write(&buffer_out[..s_out]).context(format!(
+            "Cannot write decrypted block to output file: {}",
+            fout
+        ))?;
         payload_length2 += s_out as u64;
     }
     assert!(payload_length == payload_length2);
 
     // check public key
-    let remote_static = noise.get_remote_static().unwrap();
-    match pubkey {
-        Some(pubkey_data) => {
-            assert!(&**pubkey_data == remote_static);
-            remote_static
-        }
-        None => remote_static,
-    }.into()
+    let remote_static = noise.get_remote_static().ok_or::<Error>(err_msg(
+        "Cannot extract senders static key from session state",
+    ))?;
+    if let Some(pubkey_data) = pubkey {
+        assert!(&**pubkey_data == remote_static);
+    }
+    Ok(remote_static.into())
 }
