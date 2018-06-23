@@ -1,3 +1,6 @@
+#![deny(missing_debug_implementations)]
+#![deny(unused_extern_crates)]
+
 extern crate base64;
 extern crate byteorder;
 extern crate failure;
