@@ -113,7 +113,11 @@ pub fn encrypt(
             .context(format!("Cannot encrypted block to output file: {}", fout))?;
         payload_length2 += s_payload as u64;
     }
-    assert!(payload_length == payload_length2);
+    if payload_length != payload_length2 {
+        return Err(err_msg(
+            "Size of input file changed during encryption process",
+        ));
+    }
 
     Ok(())
 }
@@ -187,14 +191,20 @@ pub fn decrypt(
         ))?;
         payload_length2 += s_out as u64;
     }
-    assert!(payload_length == payload_length2);
+    if payload_length != payload_length2 {
+        return Err(err_msg(
+            "Unexpected end of input data, encrypted data may be cropped",
+        ));
+    }
 
     // check public key
     let remote_static = noise.get_remote_static().ok_or::<Error>(err_msg(
         "Cannot extract senders static key from session state",
     ))?;
     if let Some(pubkey_data) = pubkey {
-        assert!(&**pubkey_data == remote_static);
+        if &**pubkey_data != remote_static {
+            return Err(err_msg("Cannot verify senders key"));
+        }
     }
     Ok(remote_static.into())
 }
