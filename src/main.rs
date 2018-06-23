@@ -130,7 +130,7 @@ main!(|args: Cli, log_level: verbosity| {
             let pubkey = read_key(&pubkey)?;
 
             info!("encrypting");
-            encrypt(&privkey, &pubkey, &input, &output);
+            encrypt(&privkey, &pubkey, &input, &output)?;
         }
         Command::Decrypt {
             input,

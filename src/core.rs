@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use failure::{Error, ResultExt};
 use snow::params::NoiseParams;
 use snow::{CryptoResolver, DefaultResolver, NoiseBuilder};
 
@@ -34,18 +35,27 @@ pub fn extract_pubkey(privkey: Box<[u8]>) -> Box<[u8]> {
     dh.pubkey().clone().into()
 }
 
-pub fn encrypt(privkey: &Box<[u8]>, pubkey: &Box<[u8]>, fin: &String, fout: &String) {
+pub fn encrypt(
+    privkey: &Box<[u8]>,
+    pubkey: &Box<[u8]>,
+    fin: &String,
+    fout: &String,
+) -> Result<(), Error> {
     if is_stdinout(&fin) {
         panic!("not implemented")
     }
 
     // open files
-    let mut fp_in = File::open(fin).unwrap();
-    let mut fp_out = open_writer(fout).unwrap();
+    let mut fp_in = File::open(fin)?;
+    let mut fp_out = open_writer(fout)?;
 
     // detect input length
-    let payload_length = fp_in.seek(SeekFrom::End(0)).unwrap();
-    fp_in.seek(SeekFrom::Start(0)).unwrap();
+    let payload_length = fp_in
+        .seek(SeekFrom::End(0))
+        .context(format!("Cannot seek to end of input file: {}", fin))?;
+    fp_in
+        .seek(SeekFrom::Start(0))
+        .context(format!("Cannot seek to start of input file: {}", fin))?;
 
     // set up noise protocol
     let builder: NoiseBuilder = NoiseBuilder::new(PARAMS.clone());
@@ -54,38 +64,58 @@ pub fn encrypt(privkey: &Box<[u8]>, pubkey: &Box<[u8]>, fin: &String, fout: &Str
         .remote_public_key(&pubkey)
         .prologue(PROLOGUE.as_bytes())
         .build_initiator()
-        .unwrap();
+        .context("Unable to set up noise session")?;
 
     // IO buffers
     let mut buffer_in = vec![0u8; MAX_PAYLOAD_PART_LENGTH];
     let mut buffer_out = vec![0u8; MAX_MESSAGE_LENGTH];
 
     // write intro
-    let s_out = noise.write_message(&[], &mut buffer_out).unwrap();
+    let s_out = noise
+        .write_message(&[], &mut buffer_out)
+        .context("Cannot create handshake data")?;
     assert!(s_out == HEADER_LENGTH);
-    fp_out.write(&buffer_out[..s_out]).unwrap();
-    let mut noise = noise.into_transport_mode().unwrap();
+    fp_out.write(&buffer_out[..s_out]).context(format!(
+        "Cannot write handshake data to output file: {}",
+        fout
+    ))?;
+    let mut noise = noise
+        .into_transport_mode()
+        .context("Cannot switch session in transport state")?;
     let mut lenvec: Vec<u8> = vec![];
-    lenvec.write_u64::<BigEndian>(payload_length).unwrap();
+    lenvec
+        .write_u64::<BigEndian>(payload_length)
+        .context("Cannot encode payload size")?;
     assert!(lenvec.len() == SIZEMARKER_LENGTH);
-    let s_out = noise.write_message(&lenvec, &mut buffer_out).unwrap();
+    let s_out = noise
+        .write_message(&lenvec, &mut buffer_out)
+        .context("Cannot encrypt payload size")?;
     assert!(s_out == SIZEMARKER_ENC_LENGTH);
-    fp_out.write(&buffer_out[..s_out]).unwrap();
+    fp_out.write(&buffer_out[..s_out]).context(format!(
+        "Cannot write encrypted payload size to output file: {}",
+        fout
+    ))?;
 
     // encrypt payload
     let mut payload_length2 = 0u64;
     loop {
-        let s_payload = fp_in.read(&mut buffer_in).unwrap();
+        let s_payload = fp_in
+            .read(&mut buffer_in)
+            .context(format!("Cannot read block from input file: {}", fin))?;
         if s_payload == 0 {
             break;
         }
         let s_out = noise
             .write_message(&buffer_in[..s_payload], &mut buffer_out)
-            .unwrap();
-        fp_out.write(&buffer_out[..s_out]).unwrap();
+            .context("Cannot encrypt block")?;
+        fp_out
+            .write(&buffer_out[..s_out])
+            .context(format!("Cannot encrypted block to output file: {}", fout))?;
         payload_length2 += s_payload as u64;
     }
     assert!(payload_length == payload_length2);
+
+    Ok(())
 }
 
 pub fn decrypt(
