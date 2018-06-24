@@ -13,15 +13,15 @@ pub enum KeyType {
     Private,
 }
 
-pub fn is_stdinout(fname: &String) -> bool {
+pub fn is_stdinout(fname: &str) -> bool {
     fname == "-"
 }
 
-pub fn is_none(fname: &String) -> bool {
+pub fn is_none(fname: &str) -> bool {
     fname == "."
 }
 
-pub fn is_world(fname: &String) -> bool {
+pub fn is_world(fname: &str) -> bool {
     fname == "+"
 }
 
@@ -33,7 +33,10 @@ pub fn write_key(fname: &String, data: Box<[u8]>, key_type: &KeyType) -> Result<
         return Err(err_msg("Cannot write WORLD key."));
     }
 
+    // encode key data
     let encoded = encode(&data);
+
+    // check if key data belongs to WORLD
     let s: String = match key_type {
         KeyType::Public => if encoded == WORLD_PUBLIC {
             "+".into()
@@ -46,6 +49,8 @@ pub fn write_key(fname: &String, data: Box<[u8]>, key_type: &KeyType) -> Result<
             encoded
         },
     };
+
+    // write data to actual output (stdout, file)
     if is_stdinout(fname) {
         println!("{}", s);
     } else {
@@ -53,6 +58,7 @@ pub fn write_key(fname: &String, data: Box<[u8]>, key_type: &KeyType) -> Result<
         file.write_all(s.as_bytes())
             .context(format!("Cannot write data to key file: {}", fname))?;
     }
+
     Ok(())
 }
 
@@ -61,6 +67,7 @@ pub fn read_key(fname: &String, key_type: &KeyType) -> Result<Option<Box<[u8]>>,
         return Ok(None);
     }
 
+    // read data from actual source (builtin world, stdin, file)
     let mut buffer = String::new();
     if is_world(&fname) {
         match key_type {
@@ -81,6 +88,21 @@ pub fn read_key(fname: &String, key_type: &KeyType) -> Result<Option<Box<[u8]>>,
             .context(format!("Could not read key as string: {}", fname))?;
     }
 
+    // double check if the source contained a WORLD marker
+    buffer = match key_type {
+        KeyType::Public => if is_world(&buffer.trim()) {
+            WORLD_PUBLIC.into()
+        } else {
+            buffer
+        },
+        KeyType::Private => if is_world(&buffer.trim()) {
+            WORLD_PRIVATE.into()
+        } else {
+            buffer
+        },
+    };
+
+    // decode key data
     Ok(Some(
         decode(buffer.trim())
             .context(format!("Invalid base64 data in key file: {}", fname))?
