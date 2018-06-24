@@ -28,7 +28,11 @@ pub fn write_key(fname: &String, data: Box<[u8]>) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn read_key(fname: &String) -> Result<Box<[u8]>, Error> {
+pub fn read_key(fname: &String) -> Result<Option<Box<[u8]>>, Error> {
+    if is_none(&fname) {
+        return Ok(None);
+    }
+
     let mut buffer = String::new();
     if is_stdinout(fname) {
         io::stdin()
@@ -39,9 +43,11 @@ pub fn read_key(fname: &String) -> Result<Box<[u8]>, Error> {
         file.read_to_string(&mut buffer)
             .context(format!("Could not read key as string: {}", fname))?;
     }
-    Ok(decode(buffer.trim())
-        .context(format!("Invalid base64 data in key file: {}", fname))?
-        .into())
+    Ok(Some(
+        decode(buffer.trim())
+            .context(format!("Invalid base64 data in key file: {}", fname))?
+            .into(),
+    ))
 }
 
 pub fn open_reader(fname: &String) -> Result<Box<Read>, Error> {

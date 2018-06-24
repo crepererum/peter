@@ -173,9 +173,9 @@ pub fn decrypt(
     }
 
     // check public key
-    let remote_static = noise.get_remote_static().ok_or::<Error>(err_msg(
-        "Cannot extract senders static key from session state",
-    ))?;
+    let remote_static = noise
+        .get_remote_static()
+        .ok_or_else(|| err_msg("Cannot extract senders static key from session state"))?;
     if let Some(pubkey_data) = pubkey {
         if &**pubkey_data != remote_static {
             return Err(err_msg("Cannot verify senders key"));

@@ -16,7 +16,7 @@ use failure::err_msg;
 use quicli::prelude::*;
 
 use core::{decrypt, encrypt, extract_pubkey, gen_key};
-use ioutils::{is_none, is_stdinout, read_key, write_key};
+use ioutils::{is_stdinout, read_key, write_key};
 
 /// Simple encryption tool
 #[derive(Debug, StructOpt)]
@@ -104,7 +104,7 @@ main!(|args: Cli, log_level: verbosity| {
         }
         Command::PubKey { input, output } => {
             info!("read private key ({})", input);
-            let privkey = read_key(&input)?;
+            let privkey = read_key(&input)?.ok_or_else(|| err_msg("Private key must be passed"))?;
 
             info!("extracting public key");
             let pubkey = extract_pubkey(privkey);
@@ -127,10 +127,10 @@ main!(|args: Cli, log_level: verbosity| {
             }
 
             info!("read private key ({})", privkey);
-            let privkey = read_key(&privkey)?;
+            let privkey = read_key(&privkey)?.ok_or_else(|| err_msg("Private key must be passed"))?;
 
             info!("read public key ({})", pubkey);
-            let pubkey = read_key(&pubkey)?;
+            let pubkey = read_key(&pubkey)?.ok_or_else(|| err_msg("Public key must be passed"))?;
 
             info!("encrypting");
             encrypt(&privkey, &pubkey, &input, &output)?;
@@ -159,15 +159,10 @@ main!(|args: Cli, log_level: verbosity| {
             }
 
             info!("read private key ({})", privkey);
-            let privkey = read_key(&privkey)?;
+            let privkey = read_key(&privkey)?.ok_or_else(|| err_msg("Private key must be passed"))?;
 
-            let pubkey = if is_none(&pubkey) {
-                info!("no public key provided");
-                None
-            } else {
-                info!("read public key ({})", pubkey);
-                Some(read_key(&pubkey)?)
-            };
+            info!("read public key ({})", pubkey);
+            let pubkey = read_key(&pubkey)?;
 
             info!("decrypting");
             let pubkey2 = decrypt(&privkey, &pubkey, &input, &output)?;
