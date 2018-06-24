@@ -2,7 +2,16 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 
 use base64::{decode, encode};
-use failure::{Error, ResultExt};
+use failure::{err_msg, Error, ResultExt};
+
+const WORLD_PRIVATE: &'static str = "4vQ4EoIcdkSn3liU4Fki9vyx1CsFb5RluE5gZnGfEyg=";
+const WORLD_PUBLIC: &'static str = "x+ssYnIlVuk9NkkxFbdXmNXCaAD0YB31aaUz5xsgPVI=";
+
+#[derive(Debug)]
+pub enum KeyType {
+    Public,
+    Private,
+}
 
 pub fn is_stdinout(fname: &String) -> bool {
     fname == "-"
@@ -12,29 +21,57 @@ pub fn is_none(fname: &String) -> bool {
     fname == "."
 }
 
-pub fn write_key(fname: &String, data: Box<[u8]>) -> Result<(), Error> {
+pub fn is_world(fname: &String) -> bool {
+    fname == "+"
+}
+
+pub fn write_key(fname: &String, data: Box<[u8]>, key_type: &KeyType) -> Result<(), Error> {
     if is_none(&fname) {
         return Ok(());
     }
+    if is_world(&fname) {
+        return Err(err_msg("Cannot write WORLD key."));
+    }
 
     let encoded = encode(&data);
+    let s: String = match key_type {
+        KeyType::Public => if encoded == WORLD_PUBLIC {
+            "+".into()
+        } else {
+            encoded
+        },
+        KeyType::Private => if encoded == WORLD_PRIVATE {
+            "+".into()
+        } else {
+            encoded
+        },
+    };
     if is_stdinout(fname) {
-        println!("{}", encoded);
+        println!("{}", s);
     } else {
         let mut file = File::create(fname).context(format!("Cannot create key file: {}", fname))?;
-        file.write_all(encoded.as_bytes())
+        file.write_all(s.as_bytes())
             .context(format!("Cannot write data to key file: {}", fname))?;
     }
     Ok(())
 }
 
-pub fn read_key(fname: &String) -> Result<Option<Box<[u8]>>, Error> {
+pub fn read_key(fname: &String, key_type: &KeyType) -> Result<Option<Box<[u8]>>, Error> {
     if is_none(&fname) {
         return Ok(None);
     }
 
     let mut buffer = String::new();
-    if is_stdinout(fname) {
+    if is_world(&fname) {
+        match key_type {
+            KeyType::Public => {
+                buffer = WORLD_PUBLIC.into();
+            }
+            KeyType::Private => {
+                buffer = WORLD_PRIVATE.into();
+            }
+        }
+    } else if is_stdinout(fname) {
         io::stdin()
             .read_to_string(&mut buffer)
             .context("stdin data cannot be parsed to string")?;
@@ -43,6 +80,7 @@ pub fn read_key(fname: &String) -> Result<Option<Box<[u8]>>, Error> {
         file.read_to_string(&mut buffer)
             .context(format!("Could not read key as string: {}", fname))?;
     }
+
     Ok(Some(
         decode(buffer.trim())
             .context(format!("Invalid base64 data in key file: {}", fname))?

@@ -16,7 +16,7 @@ use failure::err_msg;
 use quicli::prelude::*;
 
 use core::{decrypt, encrypt, extract_pubkey, gen_key};
-use ioutils::{is_stdinout, read_key, write_key};
+use ioutils::{is_stdinout, read_key, write_key, KeyType};
 
 /// Simple encryption tool
 #[derive(Debug, StructOpt)]
@@ -100,17 +100,18 @@ main!(|args: Cli, log_level: verbosity| {
             let key = gen_key();
 
             info!("write to output ({})", output);
-            write_key(&output, key)?;
+            write_key(&output, key, &KeyType::Private)?;
         }
         Command::PubKey { input, output } => {
             info!("read private key ({})", input);
-            let privkey = read_key(&input)?.ok_or_else(|| err_msg("Private key must be passed"))?;
+            let privkey = read_key(&input, &KeyType::Private)?
+                .ok_or_else(|| err_msg("Private key must be passed"))?;
 
             info!("extracting public key");
             let pubkey = extract_pubkey(privkey);
 
             info!("write to output ({})", output);
-            write_key(&output, pubkey)?;
+            write_key(&output, pubkey, &KeyType::Public)?;
         }
         Command::Encrypt {
             input,
@@ -127,10 +128,12 @@ main!(|args: Cli, log_level: verbosity| {
             }
 
             info!("read private key ({})", privkey);
-            let privkey = read_key(&privkey)?.ok_or_else(|| err_msg("Private key must be passed"))?;
+            let privkey = read_key(&privkey, &KeyType::Private)?
+                .ok_or_else(|| err_msg("Private key must be passed"))?;
 
             info!("read public key ({})", pubkey);
-            let pubkey = read_key(&pubkey)?.ok_or_else(|| err_msg("Public key must be passed"))?;
+            let pubkey = read_key(&pubkey, &KeyType::Public)?
+                .ok_or_else(|| err_msg("Public key must be passed"))?;
 
             info!("encrypting");
             encrypt(&privkey, &pubkey, &input, &output)?;
@@ -159,14 +162,15 @@ main!(|args: Cli, log_level: verbosity| {
             }
 
             info!("read private key ({})", privkey);
-            let privkey = read_key(&privkey)?.ok_or_else(|| err_msg("Private key must be passed"))?;
+            let privkey = read_key(&privkey, &KeyType::Private)?
+                .ok_or_else(|| err_msg("Private key must be passed"))?;
 
             info!("read public key ({})", pubkey);
-            let pubkey = read_key(&pubkey)?;
+            let pubkey = read_key(&pubkey, &KeyType::Public)?;
 
             info!("decrypting");
             let pubkey2 = decrypt(&privkey, &pubkey, &input, &output)?;
-            write_key(&foundkey, pubkey2)?;
+            write_key(&foundkey, pubkey2, &KeyType::Public)?;
         }
     }
     info!("done");
