@@ -12,6 +12,7 @@ extern crate quicli;
 mod core;
 mod ioutils;
 
+use failure::err_msg;
 use quicli::prelude::*;
 
 use core::{decrypt, encrypt, extract_pubkey, gen_key};
@@ -122,7 +123,7 @@ main!(|args: Cli, log_level: verbosity| {
                 .map(|s| is_stdinout(s) as u8)
                 .sum();
             if n_stdin > 1 {
-                panic!("You can at most have one file read from stdin!");
+                return Err(err_msg("You can at most have one file read from stdin!"));
             }
 
             info!("read private key ({})", privkey);
@@ -146,7 +147,7 @@ main!(|args: Cli, log_level: verbosity| {
                 .map(|s| is_stdinout(s) as u8)
                 .sum();
             if n_stdin > 1 {
-                panic!("You can at most have one file read from stdin!");
+                return Err(err_msg("You can at most have one file read from stdin!"));
             }
 
             let n_stdout: u8 = vec![&output, &foundkey]
@@ -154,7 +155,7 @@ main!(|args: Cli, log_level: verbosity| {
                 .map(|s| is_stdinout(s) as u8)
                 .sum();
             if n_stdout > 1 {
-                panic!("You can at most have one file written to stdout!");
+                return Err(err_msg("You can at most have one file written to stdout!"));
             }
 
             info!("read private key ({})", privkey);
