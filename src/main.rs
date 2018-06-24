@@ -2,7 +2,6 @@
 #![deny(unused_extern_crates)]
 
 extern crate base64;
-extern crate byteorder;
 extern crate failure;
 #[macro_use]
 extern crate lazy_static;

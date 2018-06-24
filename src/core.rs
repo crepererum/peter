@@ -1,24 +1,25 @@
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Write};
 
-use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use failure::{err_msg, Error, ResultExt};
 use snow::params::NoiseParams;
 use snow::{CryptoResolver, DefaultResolver, NoiseBuilder};
 
-use ioutils::{is_stdinout, open_reader, open_writer};
+use ioutils::{open_reader, open_writer};
 
 lazy_static! {
     static ref PARAMS: NoiseParams = "Noise_X_25519_ChaChaPoly_BLAKE2s".parse().unwrap();
 }
 
 const HEADER_LENGTH: usize = 96;
+const MARKER_LENGTH: usize = 1;
 const OVERHEAD_PER_MESSAGE: usize = 16;
-const SIZEMARKER_LENGTH: usize = 8;
-const SIZEMARKER_ENC_LENGTH: usize = SIZEMARKER_LENGTH + OVERHEAD_PER_MESSAGE;
 const MAX_MESSAGE_LENGTH: usize = 65535;
-const MAX_PAYLOAD_PART_LENGTH: usize = MAX_MESSAGE_LENGTH - OVERHEAD_PER_MESSAGE;
-const PROLOGUE: &'static str = "PETER V1";
+const PAYLOAD_BUFFER_LENGTH: usize = MAX_MESSAGE_LENGTH - OVERHEAD_PER_MESSAGE;
+const MAX_PAYLOAD_LENGTH: usize = PAYLOAD_BUFFER_LENGTH - MARKER_LENGTH;
+
+const PROLOGUE: &'static str = "PETER V2";
+const MARKER_NORMAL: u8 = 1;
+const MARKER_END: u8 = 2;
 
 pub fn gen_key() -> Box<[u8]> {
     let resolver = DefaultResolver::default();
@@ -41,21 +42,9 @@ pub fn encrypt(
     fin: &String,
     fout: &String,
 ) -> Result<(), Error> {
-    if is_stdinout(&fin) {
-        panic!("not implemented")
-    }
-
     // open files
-    let mut fp_in = File::open(fin)?;
+    let mut fp_in = open_reader(fin)?;
     let mut fp_out = open_writer(fout)?;
-
-    // detect input length
-    let payload_length = fp_in
-        .seek(SeekFrom::End(0))
-        .context(format!("Cannot seek to end of input file: {}", fin))?;
-    fp_in
-        .seek(SeekFrom::Start(0))
-        .context(format!("Cannot seek to start of input file: {}", fin))?;
 
     // set up noise protocol
     let builder: NoiseBuilder = NoiseBuilder::new(PARAMS.clone());
@@ -67,7 +56,7 @@ pub fn encrypt(
         .context("Unable to set up noise session")?;
 
     // IO buffers
-    let mut buffer_in = vec![0u8; MAX_PAYLOAD_PART_LENGTH];
+    let mut buffer_in = vec![0u8; PAYLOAD_BUFFER_LENGTH];
     let mut buffer_out = vec![0u8; MAX_MESSAGE_LENGTH];
 
     // write intro
@@ -75,48 +64,35 @@ pub fn encrypt(
         .write_message(&[], &mut buffer_out)
         .context("Cannot create handshake data")?;
     assert!(s_out == HEADER_LENGTH);
-    fp_out.write(&buffer_out[..s_out]).context(format!(
-        "Cannot write handshake data to output file: {}",
-        fout
-    ))?;
+    fp_out
+        .write(&buffer_out[..s_out])
+        .context("Cannot write handshake data to output file.")?;
     let mut noise = noise
         .into_transport_mode()
         .context("Cannot switch session in transport state")?;
-    let mut lenvec: Vec<u8> = vec![];
-    lenvec
-        .write_u64::<BigEndian>(payload_length)
-        .context("Cannot encode payload size")?;
-    assert!(lenvec.len() == SIZEMARKER_LENGTH);
-    let s_out = noise
-        .write_message(&lenvec, &mut buffer_out)
-        .context("Cannot encrypt payload size")?;
-    assert!(s_out == SIZEMARKER_ENC_LENGTH);
-    fp_out.write(&buffer_out[..s_out]).context(format!(
-        "Cannot write encrypted payload size to output file: {}",
-        fout
-    ))?;
 
     // encrypt payload
-    let mut payload_length2 = 0u64;
     loop {
         let s_payload = fp_in
-            .read(&mut buffer_in)
-            .context(format!("Cannot read block from input file: {}", fin))?;
-        if s_payload == 0 {
-            break;
-        }
+            .read(&mut buffer_in[MARKER_LENGTH..])
+            .context("Cannot read block from input file.")?;
+        let marker = if s_payload < MAX_PAYLOAD_LENGTH {
+            MARKER_END
+        } else {
+            MARKER_NORMAL
+        };
+        buffer_in[0] = marker;
+
         let s_out = noise
-            .write_message(&buffer_in[..s_payload], &mut buffer_out)
+            .write_message(&buffer_in[..(MARKER_LENGTH + s_payload)], &mut buffer_out)
             .context("Cannot encrypt block")?;
         fp_out
             .write(&buffer_out[..s_out])
-            .context(format!("Cannot encrypted block to output file: {}", fout))?;
-        payload_length2 += s_payload as u64;
-    }
-    if payload_length != payload_length2 {
-        return Err(err_msg(
-            "Size of input file changed during encryption process",
-        ));
+            .context("Cannot encrypted block to output file.")?;
+
+        if marker == MARKER_END {
+            break;
+        }
     }
 
     Ok(())
@@ -142,15 +118,12 @@ pub fn decrypt(
 
     // IO buffers
     let mut buffer_in = vec![0u8; MAX_MESSAGE_LENGTH];
-    let mut buffer_out = vec![0u8; MAX_PAYLOAD_PART_LENGTH];
+    let mut buffer_out = vec![0u8; PAYLOAD_BUFFER_LENGTH];
 
     // read intro
     fp_in
         .read_exact(&mut buffer_in[..HEADER_LENGTH])
-        .context(format!(
-            "Cannot read handshake data from input file: {}",
-            fin
-        ))?;
+        .context("Cannot read handshake data from input file.")?;
     let s_out = noise
         .read_message(&buffer_in[..HEADER_LENGTH], &mut buffer_out)
         .context("Cannot verify handshake data")?;
@@ -158,42 +131,44 @@ pub fn decrypt(
     let mut noise = noise
         .into_transport_mode()
         .context("Cannot switch session in transport state")?;
-    fp_in
-        .read_exact(&mut buffer_in[..SIZEMARKER_ENC_LENGTH])
-        .context(format!(
-            "Cannot read encrypted payload size from input file: {}",
-            fin
-        ))?;
-    let s_out = noise
-        .read_message(&buffer_in[..SIZEMARKER_ENC_LENGTH], &mut buffer_out)
-        .context("Cannot decrypt payload size")?;
-    assert!(s_out == SIZEMARKER_LENGTH);
-    let payload_length = (&buffer_out[..SIZEMARKER_LENGTH])
-        .read_u64::<BigEndian>()
-        .context("Cannot decode payload size")?;
 
     // decrypt payload
-    let mut payload_length2 = 0u64;
     loop {
-        let s_payload_enc = fp_in.read(&mut buffer_in).context(format!(
-            "Cannot read encrypted block from input file: {}",
-            fin
-        ))?;
+        let s_payload_enc = fp_in
+            .read(&mut buffer_in)
+            .context("Cannot read encrypted block from input file.")?;
         if s_payload_enc == 0 {
-            break;
+            return Err(err_msg(
+                "Unexpected end of input data, encrypted data may be cropped",
+            ));
         }
+
         let s_out = noise
             .read_message(&buffer_in[..s_payload_enc], &mut buffer_out)
             .context("Cannot decrypt block")?;
-        fp_out.write(&buffer_out[..s_out]).context(format!(
-            "Cannot write decrypted block to output file: {}",
-            fout
-        ))?;
-        payload_length2 += s_out as u64;
+        fp_out
+            .write(&buffer_out[MARKER_LENGTH..s_out])
+            .context("Cannot write decrypted block to output file.")?;
+        match buffer_out[0] {
+            MARKER_NORMAL => {}
+            MARKER_END => {
+                break;
+            }
+            _ => {
+                return Err(err_msg(
+                    "Unknown marker type encountered, seems like a bug on the senders side.",
+                ));
+            }
+        }
     }
-    if payload_length != payload_length2 {
+
+    // read soem more data and check if the file got extended
+    let s_tail = fp_in
+        .read(&mut buffer_in)
+        .context("Cannot read encrypted block from input file.")?;
+    if s_tail != 0 {
         return Err(err_msg(
-            "Unexpected end of input data, encrypted data may be cropped",
+            "There is data after the encrypted message, that should not happen!",
         ));
     }
 
